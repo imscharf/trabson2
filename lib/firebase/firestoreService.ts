@@ -1,0 +1,242 @@
+// lib/firebase/firestoreService.ts
+import { db, auth } from './config'; // Importa instâncias do Firebase config
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  getDocs,
+  doc,
+  getDoc, // Import necessário para buscar um doc específico
+  updateDoc,
+  deleteDoc,
+  Timestamp,
+  serverTimestamp,
+  orderBy // Import para ordenação
+} from 'firebase/firestore';
+import { v4 as uuidv4 } from 'uuid'; // Para IDs únicos de atividades
+
+// --- Interfaces ---
+// Interface para Atividade dentro de uma Tarefa
+export interface Activity {
+  id: string;       // ID único da atividade (gerado com uuid)
+  text: string;     // Texto/Descrição da atividade
+  completed: boolean; // Status (concluída ou não)
+}
+
+// Interface para Tarefa (Documento no Firestore)
+export interface Task {
+  id: string; // ID do documento no Firestore (atribuído na leitura)
+  userId: string;   // ID do usuário do Firebase Auth que criou a tarefa
+  title: string;    // Título da tarefa
+  activities: Activity[]; // Array de atividades associadas
+  createdAt: Timestamp; // Data/Hora de criação (usando Timestamp do Firestore)
+  // Poderia adicionar outros campos como `updatedAt`, `dueDate`, etc.
+}
+
+// --- Referência à Coleção ---
+const tasksCollection = collection(db, 'tasks'); // Referência à coleção 'tasks'
+
+// --- Funções CRUD ---
+
+/**
+ * Adiciona uma nova tarefa para o usuário logado.
+ * @param title - O título da nova tarefa.
+ * @returns O ID da tarefa criada ou null em caso de falha.
+ */
+export const addTask = async (title: string): Promise<string | null> => {
+  const user = auth.currentUser;
+  if (!user || !title.trim()) return null; // Verifica usuário e título não vazio
+
+  try {
+    const docRef = await addDoc(tasksCollection, {
+      userId: user.uid,       // ID do usuário logado
+      title: title.trim(),    // Título sem espaços extras
+      activities: [],         // Começa sem atividades
+      createdAt: serverTimestamp(), // Timestamp do servidor para criação
+    });
+    console.log("Tarefa adicionada com ID:", docRef.id);
+    return docRef.id; // Retorna o ID da nova tarefa
+  } catch (e) {
+    console.error("Erro ao adicionar tarefa: ", e);
+    return null;
+  }
+};
+
+/**
+ * Busca todas as tarefas do usuário logado, ordenadas por data de criação (mais recentes primeiro).
+ * @returns Uma Promise que resolve com um array de tarefas (Task[]).
+ */
+export const getTasks = async (): Promise<Task[]> => {
+  const user = auth.currentUser;
+  if (!user) return []; // Retorna array vazio se não logado
+
+  try {
+    // Cria a query: busca na coleção 'tasks', filtra por 'userId' igual ao UID do usuário logado,
+    // e ordena por 'createdAt' em ordem decrescente (mais recentes primeiro).
+    const q = query(
+        tasksCollection,
+        where("userId", "==", user.uid),
+        orderBy("createdAt", "desc") // Ordena aqui!
+    );
+
+    const querySnapshot = await getDocs(q); // Executa a query
+    const tasks: Task[] = [];
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      // Monta o objeto Task, garantindo que os tipos estão corretos
+      tasks.push({
+        id: doc.id, // Pega o ID do documento
+        userId: data.userId,
+        title: data.title,
+        // Garante que 'activities' seja sempre um array, mesmo que não exista no Firestore
+        activities: Array.isArray(data.activities) ? data.activities as Activity[] : [],
+        // Garante que 'createdAt' seja um Timestamp, usa o tempo atual como fallback se necessário
+        createdAt: data.createdAt instanceof Timestamp ? data.createdAt : Timestamp.now(),
+      });
+    });
+    // console.log("Tarefas buscadas:", tasks); // Para debug
+    return tasks; // Retorna a lista de tarefas
+  } catch (e) {
+    console.error("Erro ao buscar tarefas: ", e);
+    return []; // Retorna array vazio em caso de erro
+  }
+};
+
+/**
+ * Adiciona uma nova atividade a uma tarefa existente.
+ * @param taskId - ID da tarefa onde adicionar a atividade.
+ * @param activityText - Texto da nova atividade.
+ * @returns Uma Promise que resolve com true se sucesso, false se falha.
+ */
+export const addActivityToTask = async (taskId: string, activityText: string): Promise<boolean> => {
+  const user = auth.currentUser;
+  if (!user || !taskId || !activityText.trim()) return false; // Validações
+
+  const taskDocRef = doc(db, 'tasks', taskId); // Referência ao documento da tarefa
+
+  const newActivity: Activity = {
+    id: uuidv4(),             // Gera um ID único para a atividade
+    text: activityText.trim(), // Texto sem espaços extras
+    completed: false,          // Começa como não concluída
+  };
+
+  try {
+    // 1. Busca a tarefa para garantir que pertence ao usuário e pegar as atividades atuais
+    const taskSnap = await getDoc(taskDocRef);
+    if (!taskSnap.exists() || taskSnap.data().userId !== user.uid) {
+      console.error("Permissão negada ou tarefa não encontrada para adicionar atividade.");
+      return false;
+    }
+
+    // 2. Pega o array de atividades atual ou um array vazio se não existir
+    const currentActivities = taskSnap.data().activities || [];
+
+    // 3. Atualiza o documento no Firestore, adicionando a nova atividade ao array existente
+    await updateDoc(taskDocRef, {
+      activities: [...currentActivities, newActivity] // Cria um novo array com a atividade adicionada
+    });
+    console.log(`Atividade "${newActivity.text}" adicionada à tarefa ${taskId}`);
+    return true;
+  } catch (e) {
+    console.error("Erro ao adicionar atividade: ", e);
+    return false;
+  }
+};
+
+/**
+ * Atualiza o status (concluído/não concluído) de uma atividade específica dentro de uma tarefa.
+ * @param taskId - ID da tarefa que contém a atividade.
+ * @param activityId - ID da atividade a ser atualizada.
+ * @param completed - O novo status de conclusão (true ou false).
+ * @returns Uma Promise que resolve com true se sucesso, false se falha.
+ */
+export const updateActivityStatus = async (taskId: string, activityId: string, completed: boolean): Promise<boolean> => {
+  const user = auth.currentUser;
+  if (!user || !taskId || !activityId) return false;
+
+  const taskDocRef = doc(db, 'tasks', taskId);
+
+  try {
+    // 1. Busca a tarefa
+    const taskSnap = await getDoc(taskDocRef);
+    if (!taskSnap.exists() || taskSnap.data().userId !== user.uid) {
+      console.error("Permissão negada ou tarefa não encontrada para atualizar atividade.");
+      return false;
+    }
+
+    // 2. Pega as atividades atuais
+    const currentActivities: Activity[] = taskSnap.data().activities || [];
+
+    // 3. Mapeia as atividades, criando um novo array com a atividade modificada
+    const updatedActivities = currentActivities.map(activity =>
+      activity.id === activityId
+        ? { ...activity, completed: completed } // Atualiza o status 'completed'
+        : activity // Mantém as outras atividades como estão
+    );
+
+    // 4. Verifica se a atividade foi encontrada e modificada (opcional, mas bom)
+    if (JSON.stringify(currentActivities) === JSON.stringify(updatedActivities)) {
+        console.warn(`Atividade com ID ${activityId} não encontrada na tarefa ${taskId}`);
+        // Poderia retornar false aqui se quisesse ser estrito,
+        // mas vamos retornar true pois a operação Firestore não falharia necessariamente.
+    }
+
+
+    // 5. Atualiza o documento da tarefa com o novo array de atividades
+    await updateDoc(taskDocRef, {
+      activities: updatedActivities
+    });
+    console.log(`Status da atividade ${activityId} na tarefa ${taskId} atualizado para ${completed}`);
+    return true;
+  } catch (e) {
+    console.error("Erro ao atualizar status da atividade: ", e);
+    return false;
+  }
+};
+
+/**
+ * Deleta uma tarefa completa (incluindo suas atividades).
+ * @param taskId - O ID da tarefa a ser deletada.
+ * @returns Uma Promise que resolve com true se sucesso, false se falha.
+ */
+export const deleteTask = async (taskId: string): Promise<boolean> => {
+  const user = auth.currentUser;
+  if (!user || !taskId) return false;
+
+  const taskDocRef = doc(db, 'tasks', taskId);
+
+  try {
+    // Opcional, mas bom: Verificar posse antes de deletar (regra de segurança é a garantia principal)
+     const taskSnap = await getDoc(taskDocRef);
+     if (taskSnap.exists() && taskSnap.data().userId !== user.uid) {
+         console.error("Permissão negada para deletar tarefa.");
+         return false;
+     }
+
+    await deleteDoc(taskDocRef); // Deleta o documento
+    console.log(`Tarefa ${taskId} deletada.`);
+    return true;
+  } catch (e) {
+    console.error("Erro ao deletar tarefa: ", e);
+    return false;
+  }
+};
+
+/**
+ * Calcula o percentual de conclusão de uma tarefa baseado em suas atividades.
+ * @param activities - O array de atividades da tarefa.
+ * @returns O percentual de conclusão (0 a 100).
+ */
+export const calculateProgress = (activities: Activity[] | undefined): number => {
+    if (!activities || activities.length === 0) {
+      return 0; // Se não há atividades, o progresso é 0
+    }
+    const completedCount = activities.filter(act => act.completed).length;
+    // Arredonda para o inteiro mais próximo
+    return Math.round((completedCount / activities.length) * 100);
+};
+
+// Futuras funções poderiam incluir:
+// - updateTaskTitle(taskId: string, newTitle: string)
+// - deleteActivity(taskId: string, activityId: string)
