@@ -260,4 +260,55 @@ export const calculateProgress = (activities: Activity[] | undefined): number =>
 
 // Futuras funções poderiam incluir:
 // - updateTaskTitle(taskId: string, newTitle: string)
-// - deleteActivity(taskId: string, activityId: string)
+
+/**
+ * Deleta uma atividade específica de dentro de uma tarefa.
+ * @param taskId - O ID da tarefa pai.
+ * @param activityId - O ID da atividade a ser removida.
+ * @returns Uma Promise que resolve com true se a atividade foi removida (ou não encontrada), false se ocorreu um erro.
+ */
+export const deleteActivityFromTask = async (taskId: string, activityId: string): Promise<boolean> => {
+  const user = auth.currentUser;
+  // Validação básica de entrada
+  if (!user || !taskId || !activityId) {
+    console.warn("[deleteActivityFromTask] Parâmetros inválidos ou usuário não logado.");
+    return false;
+  }
+
+  const taskDocRef = doc(db, 'tasks', taskId); // Referência ao documento da tarefa
+
+  try {
+    // 1. Busca a tarefa atual para verificar permissão e obter o array de atividades
+    const taskSnap = await getDoc(taskDocRef);
+    if (!taskSnap.exists() || taskSnap.data().userId !== user.uid) {
+      console.error(`[deleteActivityFromTask] Permissão negada ou tarefa ${taskId} não encontrada.`);
+      return false; // Falha se não encontrar a tarefa ou não for o dono
+    }
+
+    // 2. Pega o array de atividades atual
+    const currentActivities: Activity[] = taskSnap.data().activities || [];
+
+    // 3. Filtra o array, criando um NOVO array SEM a atividade a ser deletada
+    const updatedActivities = currentActivities.filter(activity => activity.id !== activityId);
+
+    // 4. Verifica se alguma atividade foi realmente removida (opcional, mas bom para log)
+    if (currentActivities.length === updatedActivities.length) {
+      // Isso significa que a activityId fornecida não estava na lista
+      console.warn(`[deleteActivityFromTask] Atividade com ID ${activityId} não foi encontrada na tarefa ${taskId}. Nenhuma alteração feita.`);
+      // Retorna true aqui porque não houve erro de Firestore, apenas a condição não se aplicou.
+      return true;
+    }
+
+    // 5. Atualiza o documento da tarefa no Firestore com o array filtrado
+    console.log(`[deleteActivityFromTask] Removendo atividade ${activityId} da tarefa ${taskId}...`);
+    await updateDoc(taskDocRef, {
+      activities: updatedActivities // Salva o array sem a atividade deletada
+    });
+
+    return true; // Sucesso na remoção
+
+  } catch (e) {
+    console.error("[deleteActivityFromTask] Erro durante a remoção da atividade no Firestore: ", e);
+    return false; // Erro durante a operação do Firestore
+  }
+};
