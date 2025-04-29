@@ -36,19 +36,26 @@ export default function SignUpPage() {
       await createUserWithEmailAndPassword(auth, email, password);
       // Não precisa mais esperar setLoading(false) aqui, pois o router.push vai desmontar o componente
       router.push('/dashboard'); // Redireciona para o painel após sucesso
-    } catch (err: any) {
-      console.error("Erro no cadastro Firebase:", err.code, err.message);
-      // Trata erros comuns do Firebase Auth
-      if (err.code === 'auth/email-already-in-use') {
-        setError('Este e-mail já está cadastrado.');
-      } else if (err.code === 'auth/invalid-email') {
-        setError('Formato de e-mail inválido.');
-      } else if (err.code === 'auth/weak-password') {
-        setError('Senha muito fraca. Use pelo menos 6 caracteres.');
-      } else {
-        setError('Ocorreu um erro inesperado. Tente novamente.');
-      }
-      setLoading(false); // Para o loading em caso de erro
+    } catch (error: unknown) { // <<< Mude para unknown
+      setLoading(false); // Garante que o loading pare em caso de erro
+      // Verifica se 'error' é um objeto e tem as propriedades 'code' e 'message'
+       if (error instanceof Error && 'code' in error) {
+           const err = error as { code?: string; message: string }; // Type assertion
+           console.error("Erro no cadastro Firebase:", err.code, err.message);
+           let friendlyMessage = 'Falha ao cadastrar. Tente novamente.';
+           if (err.code === 'auth/email-already-in-use') {
+             friendlyMessage = 'Este e-mail já está cadastrado.';
+           } else if (err.code === 'auth/invalid-email') {
+             friendlyMessage = 'Formato de e-mail inválido.';
+           } else if (err.code === 'auth/weak-password') {
+             friendlyMessage = 'Senha muito fraca. Use pelo menos 6 caracteres.';
+           }
+           setError(friendlyMessage);
+       } else {
+           // Caso o erro não seja no formato esperado
+            console.error("Erro no cadastro (formato inesperado):", error);
+           setError('Ocorreu um erro inesperado. Tente novamente.');
+       }
     }
   };
 

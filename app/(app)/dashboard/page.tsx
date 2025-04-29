@@ -6,7 +6,6 @@ import { useAuth } from '@/context/AuthContext'; // Hook de Autenticação
 import LoadingSpinner from '@/components/ui/LoadingSpinner'; // Componente Spinner
 import { // Funções e Tipos do Serviço Firestore
   Task,
-  Activity,
   getTasks,
   addTask,
   deleteTask,

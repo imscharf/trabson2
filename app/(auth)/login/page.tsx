@@ -23,17 +23,26 @@ export default function LoginPage() {
       // Tenta fazer login com Firebase Auth
       await signInWithEmailAndPassword(auth, email, password);
       router.push('/dashboard'); // Redireciona para o painel
-    } catch (err: any) {
-      console.error("Erro no login Firebase:", err.code, err.message);
-      // Trata erros comuns (Requisito 3: tratar exceção de login)
-      if (err.code === 'auth/invalid-email') {
-         setError('Formato de e-mail inválido.');
-      } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-         setError('E-mail ou senha inválidos.');
+    } catch (error: unknown) { // <<< Mude para unknown
+      setLoading(false); // Garante que o loading pare em caso de erro
+      // Verifica se 'error' é um objeto e tem as propriedades 'code' e 'message'
+      if (error instanceof Error && 'code' in error) {
+          const err = error as { code?: string; message: string }; // Type assertion após checagem
+          console.error("Erro no login Firebase:", err.code, err.message);
+          let friendlyMessage = 'Falha ao fazer login. Verifique seu e-mail e senha.';
+          if (err.code === 'auth/invalid-email') {
+            friendlyMessage = 'Formato de e-mail inválido.';
+          } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+            friendlyMessage = 'E-mail ou senha inválidos.';
+          } else {
+            friendlyMessage = 'Ocorreu um erro inesperado. Tente novamente.';
+          }
+          setError(friendlyMessage);
       } else {
-        setError('Ocorreu um erro inesperado. Tente novamente.');
+          // Caso o erro não seja no formato esperado
+          console.error("Erro no login (formato inesperado):", error);
+          setError('Ocorreu um erro inesperado. Tente novamente.');
       }
-      setLoading(false); // Para loading em caso de erro
     }
   };
 
