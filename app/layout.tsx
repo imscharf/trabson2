@@ -2,7 +2,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css'; // Importa os estilos globais (Tailwind)
-import { AuthProvider } from '../context/AuthContext'; // Importa nosso provedor de autenticação
+import { AuthProvider } from '@/context/AuthContext'; // Importa nosso provedor de autenticação
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -17,12 +17,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR"> {/* Define a língua */}
+    <html lang="pt-BR">{}
       <body className={inter.className}>
-        {/* Envolve TODA a aplicação com o AuthProvider */}
-        {/* Assim, o estado de auth fica disponível globalmente */}
+        {}
+        {}
         <AuthProvider>
-          {children} {/* Aqui serão renderizadas as páginas específicas */}
+          {children} {}
         </AuthProvider>
       </body>
     </html>

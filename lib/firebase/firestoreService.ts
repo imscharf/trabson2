@@ -146,14 +146,18 @@ export const addActivityToTask = async (taskId: string, activityText: string): P
 
 /**
  * Atualiza o status (concluído/não concluído) de uma atividade específica dentro de uma tarefa.
+ * É mais eficiente, pois só tenta atualizar se o status realmente mudou.
  * @param taskId - ID da tarefa que contém a atividade.
  * @param activityId - ID da atividade a ser atualizada.
- * @param completed - O novo status de conclusão (true ou false).
- * @returns Uma Promise que resolve com true se sucesso, false se falha.
+ * @param completed - O novo status de conclusão desejado (true ou false).
+ * @returns Uma Promise que resolve com true se sucesso OU se nenhuma atualização era necessária, false se erro no Firestore.
  */
 export const updateActivityStatus = async (taskId: string, activityId: string, completed: boolean): Promise<boolean> => {
   const user = auth.currentUser;
-  if (!user || !taskId || !activityId) return false;
+  if (!user || !taskId || !activityId === undefined) { // Verifica activityId também
+      console.warn("[updateActivityStatus] Parâmetros inválidos recebidos.");
+      return false; // Retorna false se parâmetros essenciais faltam
+  }
 
   const taskDocRef = doc(db, 'tasks', taskId);
 
@@ -161,37 +165,54 @@ export const updateActivityStatus = async (taskId: string, activityId: string, c
     // 1. Busca a tarefa
     const taskSnap = await getDoc(taskDocRef);
     if (!taskSnap.exists() || taskSnap.data().userId !== user.uid) {
-      console.error("Permissão negada ou tarefa não encontrada para atualizar atividade.");
-      return false;
+      console.error(`[updateActivityStatus] Permissão negada ou tarefa ${taskId} não encontrada.`);
+      return false; // Falha se não achar ou não for dono
     }
 
     // 2. Pega as atividades atuais
     const currentActivities: Activity[] = taskSnap.data().activities || [];
+    let activityFound = false;
+    let needsUpdate = false; // Flag para saber se o status realmente precisa mudar
 
-    // 3. Mapeia as atividades, criando um novo array com a atividade modificada
-    const updatedActivities = currentActivities.map(activity =>
-      activity.id === activityId
-        ? { ...activity, completed: completed } // Atualiza o status 'completed'
-        : activity // Mantém as outras atividades como estão
-    );
+    // 3. Mapeia as atividades, verificando se precisa atualizar
+    const updatedActivities = currentActivities.map(activity => {
+      if (activity.id === activityId) {
+        activityFound = true;
+        // Só marca que precisa atualizar SE o estado atual for DIFERENTE do desejado
+        if (activity.completed !== completed) {
+          needsUpdate = true;
+          return { ...activity, completed: completed }; // Retorna o objeto atualizado
+        }
+      }
+      return activity; // Retorna o objeto original se não for o ID ou se o status já estiver correto
+    });
 
-    // 4. Verifica se a atividade foi encontrada e modificada (opcional, mas bom)
-    if (JSON.stringify(currentActivities) === JSON.stringify(updatedActivities)) {
-        console.warn(`Atividade com ID ${activityId} não encontrada na tarefa ${taskId}`);
-        // Poderia retornar false aqui se quisesse ser estrito,
-        // mas vamos retornar true pois a operação Firestore não falharia necessariamente.
+    // 4. Decide o que fazer
+    if (!activityFound) {
+      // Se o ID não foi encontrado DE FATO
+      console.warn(`[updateActivityStatus] Atividade com ID ${activityId} não encontrada na tarefa ${taskId}. Nenhuma atualização será feita.`);
+      // Consideramos sucesso porque não houve erro, apenas a condição não foi atendida.
+      // Poderia ser false dependendo da lógica do seu app.
+      return true;
     }
 
+    if (!needsUpdate) {
+       // Se o ID foi encontrado, MAS o status já era o desejado
+       console.log(`[updateActivityStatus] Status da atividade ${activityId} já era ${completed}. Nenhuma atualização de Firestore necessária.`);
+       return true; // Sucesso, pois o estado final está correto, sem precisar escrever no DB.
+    }
 
-    // 5. Atualiza o documento da tarefa com o novo array de atividades
+    // 5. SOMENTE se a atividade foi encontrada E o status precisa mudar, atualiza o Firestore
+    console.log(`[updateActivityStatus] Atualizando status da atividade ${activityId} (tarefa ${taskId}) para ${completed} no Firestore...`);
     await updateDoc(taskDocRef, {
       activities: updatedActivities
     });
-    console.log(`Status da atividade ${activityId} na tarefa ${taskId} atualizado para ${completed}`);
-    return true;
+
+    return true; // Sucesso na atualização
+
   } catch (e) {
-    console.error("Erro ao atualizar status da atividade: ", e);
-    return false;
+    console.error("[updateActivityStatus] Erro durante a atualização no Firestore: ", e);
+    return false; // Erro durante a operação do Firestore
   }
 };
 
